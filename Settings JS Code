@@ -1,0 +1,461 @@
+//Global Variables
+var UserName = "test1";
+var UserPassword = "test2";
+var AccountName = "test3";
+var ClientName = "test4";
+var tokenBody = {
+  'User': UserName ,
+  'Password': UserPassword ,
+  'Account': AccountName ,
+  'ClientName': ClientName 
+};
+var webhookName = "CDEPOCTest";
+var detailsJSON = "";
+var fieldsArray = [];
+var CustomCDEName = "";
+
+//Enable Client Name Input
+document.getElementById('toolBar').innerHTML = '<label style="color:white" for="clientNameByUser">Client Name to Store Logs : </label><input type="text" id="clientNameByUser">';
+document.getElementById('clientNameByUser').value = ClientName;
+document.getElementById('clientNameByUser').addEventListener('input', function() {
+            tokenBody.ClientName = document.getElementById('clientNameByUser').value;
+});
+
+origami.pageComplete( async function () {
+console.log("CDE POC Entered");
+
+//Load Delete UI Only if Account Level
+if(getCurrentClientID() != -1) return;
+
+//Styles
+var styleElement = document.createElement('style');
+var cssRules = `
+  .green-check::before {
+    content: '\\2713'; 
+    color: green;
+    margin-right: 5px;
+    margin-left: 12px;
+  }
+  
+  .red-cross::before {
+    content: '\\2717'; 
+    color: red;
+    margin-right: 5px; 
+    margin-left: 12px;
+  }
+
+  .bullet::before {
+    content: '\\2022';
+    color: green;
+    margin-right: 5px; 
+    margin-left: 12px;
+  }
+  
+ #nameTable td:hover {transform: scale(1.03); transition: transform 0.5s ease; color:mediumvioletred;}
+ #fieldsTable td:hover {transform: scale(1.03); transition: transform 0.5s ease; color:mediumvioletred;}
+ #deletionList td:hover {transform: scale(1.03); transition: transform 0.5s ease; color:mediumvioletred;}
+`;
+styleElement.innerHTML = cssRules;
+var headElement = document.head;
+headElement.appendChild(styleElement);
+
+
+//Loading Message
+document.getElementById("content").innerHTML = '<div><div class="loading-spinner" style="border: 4px solid rgba(0, 0, 0, 0.1);border-top: 4px solid #3498db;  border-radius: 50%;  width: 40px;  height: 40px;  animation: spin 1s linear infinite;  margin: auto;"></div><br><p style="text-align: center;">Loading CDE List</p></div>';
+
+//Get Token
+var response = await fetch('/OrigamiApi/Authentication/Authenticate', {
+    method: 'POST',
+    mode: 'cors',
+    body: JSON.stringify(tokenBody),
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  });
+
+//Get Domains
+var myJson = await response.json(); 
+console.log(myJson.Token);
+var token = myJson.Token;
+var responseCDE = await fetch('/OrigamiApi/api/Domains', {
+    method: 'GET',
+    mode: 'cors',
+    headers: {
+      'Content-Type': 'application/json',
+      'Token': `${token}`
+    }
+  });
+
+//Build CDE Names
+var myJson = await responseCDE.json(); 
+console.log(myJson);
+var nameList = myJson.map(function(item) {
+  if(item.Name.startsWith("Custom.")){
+    return `<tr><td>`+item.Name+`</td></tr>`;
+  }}).join('');
+var tableHTML = `
+  <div style="display: flex;">
+  <div style="flex: 1;">
+  <input type="text" id="searchBar" placeholder="Search for CDEs..."/><p><br></p>
+  <div id="column1">
+  <table id="nameTable">
+  <thead>
+  <tr>
+  <th style="background:white"><strong><u>Custom CDE Name</u></strong></th>
+  </tr>
+  </thead>
+  <tbody>
+  ${nameList}
+  </tbody>
+  </table>
+  </div>
+  </div>
+  <div style="flex: 1;">
+  <input type="text" id="searchBarFields" placeholder="Search for Fields..."/><p><br></p>
+  <div id="column2"></div>
+  </div>
+  <div style="flex: 1;">
+  <p><button id="checkDetailsButton" style="display:none;" onclick="checkAndWarn()">Delete</button><p><br></p></p><div id="column3"><table id="deletionList" style="display:none;"><thead><tr><th style="background:white"><u><strong>Fields to be Deleted</strong></u> (Click on the Field to Remove from this List)</th></tr></thead><tbody></tbody></table></div>
+  </div>
+  </div>
+`;
+document.getElementById("content").innerHTML = tableHTML;
+document.querySelector("div[id='column3'").style.display = "none";
+document.querySelector("input[id='searchBarFields'").style.display = "none";
+
+
+//Search Bar for CDEs
+var searchBar = document.getElementById('searchBar');
+var nameTable = document.getElementById('nameTable');
+searchBar.addEventListener('input', function() {
+      var searchTerm = searchBar.value.toLowerCase();
+      var rows = nameTable.querySelectorAll('tr');
+      
+      for (let i = 1; i < rows.length; i++) {
+        var name = rows[i].querySelector('td').textContent.toLowerCase();        
+        if (name.includes(searchTerm)) {
+          rows[i].style.display = '';
+        } else {
+          rows[i].style.display = 'none';
+        }
+      }
+    });
+
+//Click on CDE to Fetch Fields
+var rows = nameTable.querySelectorAll('tr');
+for (let i = 1; i < rows.length; i++) {
+  rows[i].addEventListener('click', function(event) {
+    CustomCDEName = event.target.textContent;
+    document.getElementById("checkDetailsButton").style.display = "none";
+    document.getElementById("deletionList").style.display = "none";
+    var name = rows[i].querySelector('td').textContent;
+    displayFields(name);
+  });
+}
+
+//Fetch Fields and Display for the Clicked CDE
+async function displayFields(name){
+document.getElementById('column2').innerHTML = '';
+document.getElementById('column3').querySelector('tbody').innerHTML = '';
+if(document.getElementById('message') != null) document.getElementById('message').style.display = 'none';
+document.querySelector("div[id='column3'").style.display = "";
+document.querySelector("input[id='searchBarFields'").style.display = "";
+var responseDisplay = await fetch('/OrigamiApi/Authentication/Authenticate', {
+    method: 'POST',
+    mode: 'cors',
+    body: JSON.stringify(tokenBody),
+    headers: {
+      'Content-Type': 'application/json'
+    }
+});
+var myFieldJson = await responseDisplay.json(); 
+console.log(myFieldJson.Token);
+var token = myFieldJson.Token;
+var requestBody = {
+  'resource': 'getCDEFields',
+  'CDEName': name
+};
+var responseCDEFields = await fetch('/OrigamiApi/api/Webhook/'+webhookName, {
+    method: 'POST',
+    mode: 'cors',
+    headers: {
+      'Content-Type': 'application/json',
+      'Token': `${token}`
+    },
+    body: JSON.stringify(requestBody)
+  });
+var myFieldJson = await responseCDEFields.json(); 
+console.log(myFieldJson);
+
+//Table for Fields
+var cdeFieldsTableHTML = '<table id="fieldsTable"><thead><tr><th style="background:white"><u>Fields under <strong><span id="CDEName">' + name  + '</span></strong></u></th></tr></thead>';
+for (var i = 0; i < myFieldJson.CDEFields.length ; i++) {
+    var field = myFieldJson.CDEFields[i];
+    var idField = CustomCDEName.replace(/^Custom\./, '') + "ID";
+    if(!(idField == field)) cdeFieldsTableHTML += '<tr><td>' + field + '</td></tr>';
+}
+cdeFieldsTableHTML += '</table>';
+document.getElementById("column2").innerHTML = cdeFieldsTableHTML;
+
+//Search Bar for CDE Fields
+var searchBarFields = document.getElementById('searchBarFields');
+var fieldsTable = document.getElementById('fieldsTable');
+searchBarFields.addEventListener('input', function() {
+      var searchTerm = searchBarFields.value.toLowerCase();
+      var rows = fieldsTable.querySelectorAll('tr');
+      
+      for (let i = 1; i < rows.length; i++) {
+        var name = rows[i].querySelector('td').textContent.toLowerCase();        
+        if (name.includes(searchTerm)) {
+          rows[i].style.display = '';
+        } else {
+          rows[i].style.display = 'none';
+        }
+      }
+    });
+}
+
+// Add Fields to Delete List
+const column2 = document.getElementById('column2');
+const column3 = document.getElementById('column3');
+column2.addEventListener('click', function(event) {
+if (event.target.tagName === 'TD' && event.target.parentElement.tagName === 'TR') {
+    document.getElementById("checkDetailsButton").style.display = "";
+    document.getElementById("deletionList").style.display = "";
+    const clickedName = event.target.textContent.trim();
+    if (!isTextAlreadyPresent(clickedName))
+    {
+        if(document.getElementById('message') != null) document.getElementById('message').style.display = 'none';
+        const newRow = document.createElement('tr');
+        const nameCell = document.createElement('td');
+        nameCell.textContent = clickedName;
+        newRow.appendChild(nameCell);
+        column3.querySelector('tbody').appendChild(newRow);    
+        newRow.addEventListener('click', function() {
+            newRow.remove(); 
+        });
+    }
+  }
+});
+
+
+function isTextAlreadyPresent(text) 
+{
+    const column3TableBody = document.getElementById('column3').querySelector('tbody');
+    const existingRows = column3TableBody.querySelectorAll('tr');
+    for (const row of existingRows) 
+    {
+        if (row.querySelector('td').textContent.trim() === text) 
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+});
+
+
+
+
+//Warnings before Proceding to Delete
+async function checkAndWarn(){
+    fieldsArray = [];
+    document.getElementById("alerts").innerHTML = '<div id="message" style="padding:8px; border:2px solid black; margin:5px;">Please check before proceeding:<br><br><div id="toBeDeleted"></div><input type="checkbox" id="myCheckbox" name="myCheckbox" value="1"><label for="myCheckbox">&nbsp;I have verified the details and understand that this cannot be undone</label><br><br><button onclick="finalDeleteField()" id="finalDelete">DELETE</button></div>';
+    //Loading Details
+    document.getElementById("toBeDeleted").innerHTML = '<style>td:hover {transform: scale(1.03); transition: transform 0.5s ease; color:mediumvioletred;}</style><div><div class="loading-spinner" style="border: 4px solid rgba(0, 0, 0, 0.1);border-top: 4px solid #3498db;  border-radius: 50%;  width: 20px;  height: 20px;  animation: spin 1s linear infinite;"></div><p>Checking Details</p><br></div>';
+    document.getElementById("finalDelete").disabled = true;
+    document.getElementById("finalDelete").style.background = "grey";
+    const checkbox = document.getElementById('myCheckbox');
+    const finalDeleteButton = document.getElementById('finalDelete');
+    checkbox.addEventListener('click', function() {
+        finalDeleteButton.disabled = !this.checked;
+        if(this.checked) {
+            document.getElementById("finalDelete").style.background = "#b22222";
+            document.getElementById("finalDelete").style.color = "white";
+        }
+        else
+        {
+            document.getElementById("finalDelete").style.background = "grey";
+            document.getElementById("finalDelete").style.color = "black";
+        }
+    });
+    //Display the Final CDE Name and Fields Under it to be Deleted
+        var cdeName = document.getElementById("CDEName").innerText;
+        var fieldsTable = document.getElementById("deletionList");
+        var tdElements = fieldsTable.querySelectorAll("td");
+        tdElements.forEach(function(td) {
+            fieldsArray.push(td.innerText);
+        });
+        //Call checkDetails
+        var checkResponse = await fetch('/OrigamiApi/Authentication/Authenticate', {
+            method: 'POST',
+            mode: 'cors',
+            body: JSON.stringify(tokenBody),
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+        //Check Details
+        var myJson = await checkResponse.json(); 
+        console.log(myJson.Token);
+        var token = myJson.Token;
+        var CDEName = document.getElementById("CDEName").innerText;
+        var requestBody = {
+          'resource': 'checkDetails',
+          'CDEName': CDEName,
+          'FieldList': fieldsArray
+        };
+        var responseDetails = await fetch('/OrigamiApi/api/Webhook/'+webhookName, {
+            method: 'POST',
+            mode: 'cors',
+            headers: {
+              'Content-Type': 'application/json',
+              'Token': `${token}`
+            },
+            body: JSON.stringify(requestBody)
+          });
+        detailsJSON = await responseDetails.json(); 
+        console.log(detailsJSON);
+        //Display the field details
+        const container = document.getElementById("toBeDeleted");
+        container.innerHTML = "<strong><u>CDE Name</u></strong><br>" + cdeName + "<br><strong><u>Fields Details</u></strong><br>";
+        const table = document.createElement("table");
+        table.classList.add("details-table");
+        const headerRow = table.insertRow();
+        headerRow.style ="border:1px solid black; color:white ;text-align:center; background:grey"
+        const headerCell1 = headerRow.insertCell();
+        headerCell1.innerHTML += `<span style="padding:10px;">Field</span>`;
+        const headerCell2 = headerRow.insertCell();
+        headerCell2.innerHTML += `<span style="padding:10px;">Custom Field to be Deleted</span>`;
+        const headerCell3 = headerRow.insertCell();
+        headerCell3.innerHTML += `<span style="padding:10px;">Foreign Key to be Dropped</span>`;
+        for (const key in detailsJSON) {
+            const detail = detailsJSON[key];
+            
+            const row = table.insertRow();
+            row.style.border = "1px solid black";
+
+            const cell1 = row.insertCell();
+            const div = document.createElement("div");
+            if (detail.Exists === "Yes")
+                cell1.innerHTML += `<span style="padding:10px;" class="bullet">${key} Exists  </span>`;
+            else cell1.innerHTML += `<span style="padding:10px; color:red;" class="bullet">${key} Not Found  </span>`;
+            const cell2 = row.insertCell();
+            if (detail.CustomFieldID) 
+            {
+                cell2.innerHTML += `<span style="padding:10px;" class="bullet">Custom Field with ID ${detail.CustomFieldID} will be Deleted  </span>`;
+            } else { cell2.innerHTML += `<span style="padding:10px;" class="bullet"></span>`; }
+            const cell3 = row.insertCell();
+            if (detail.ForeignKey) 
+            {
+                cell3.innerHTML += `<span style="padding:10px;" class="bullet">${detail.ForeignKey} will be dropped  </span>`;
+            } else { cell3.innerHTML += `<span style="padding:10px;" class="bullet"></span>`; }
+            
+        }
+        container.appendChild(table);
+        container.innerHTML += "<br>";
+}
+
+
+async function finalDeleteField(){
+    console.log("In finalDeleteField with user : " + getCurrentUserID());
+    document.getElementById("myCheckbox").style.display = "none";
+    document.querySelector('label[for="myCheckbox"]').style.display = "none";
+    document.getElementById("finalDelete").style.display = "none";
+    //Loading Details
+    document.getElementById("toBeDeleted").innerHTML = '<style>td:hover {transform: scale(1.03); transition: transform 0.5s ease; color:mediumvioletred;}</style><div><div class="loading-spinner" style="border: 4px solid rgba(0, 0, 0, 0.1);border-top: 4px solid #3498db;  border-radius: 50%;  width: 20px;  height: 20px;  animation: spin 1s linear infinite;"></div><p>Deletion in Progress. Please Wait Till Completion. The logs can be Checked at the Client Level.</p><br></div>';
+    //Call deleteCDEField
+        var tokenResponse = await fetch('/OrigamiApi/Authentication/Authenticate', {
+            method: 'POST',
+            mode: 'cors',
+            body: JSON.stringify(tokenBody),
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+        //Delete CDE Fields
+        var myJson = await tokenResponse.json(); 
+        console.log(myJson.Token);
+        var token = myJson.Token;
+        var CDEName = document.getElementById("CDEName").innerText;
+        var requestBody = {
+          'resource': 'deleteCDEField',
+          'CDEName': CDEName,
+          'FieldList': fieldsArray,
+          'UserID': getCurrentUserID()
+        };
+        var deletionResponse = await fetch('/OrigamiApi/api/Webhook/'+webhookName, {
+            method: 'POST',
+            mode: 'cors',
+            headers: {
+              'Content-Type': 'application/json',
+              'Token': `${token}`
+            },
+            body: JSON.stringify(requestBody)
+          });
+        deletionJSON = await deletionResponse.json(); 
+        console.log(deletionJSON);
+        //Display Deletion Status
+        const container = document.getElementById("toBeDeleted");
+        document.getElementById("toBeDeleted").innerHTML = '';
+        const tableDelete = document.createElement("table");
+        const headerRowDelete = tableDelete.insertRow();
+        headerRowDelete.style ="border:1px solid black; color:white ;text-align:center; background:grey"
+        const headerRowCell1 = headerRowDelete.insertCell();
+        headerRowCell1.innerHTML += `<span style="padding:10px;">Field</span>`;
+        const headerRowCell2 = headerRowDelete.insertCell();
+        headerRowCell2.innerHTML += `<span style="padding:10px;">Custom Field Status</span>`;
+        const headerRowCell3 = headerRowDelete.insertCell();
+        headerRowCell3.innerHTML += `<span style="padding:10px;">Foreign Key Status</span>`;
+        for (const key in deletionJSON) {
+            if(key != "UserDetails")
+            {
+                const detail = deletionJSON[key];
+                const row = tableDelete.insertRow();
+                row.style.border = "1px solid black";
+                const div = document.createElement("div");
+                const cell1 = row.insertCell();
+                if(detail.ColumnDeleted)
+                {
+                    if (detail.ColumnDeleted == "Deleted")
+                    {
+                        cell1.innerHTML += `<span class="green-check">${key} : Deleted  </span>`;
+                    }
+                    else
+                    {
+                        cell1.innerHTML += `<span style="color:red;" class="red-cross">${key} : Error  </span>`;
+                    }
+                } else { cell1.innerHTML += `<span style="padding:10px;" class="bullet"></span>`; }
+               const cell2 = row.insertCell();
+               if(detail.CustomFieldDeleted)
+                {
+                    if (detail.CustomFieldDeleted == "Yes") 
+                    {
+                        cell2.innerHTML += `<span class="green-check">Custom Field with ID ${detail.CustomFieldID} Deleted  </span>`;
+                    }
+                    else
+                    {
+                        cell2.innerHTML += `<span style="color:red;" class="red-cross">Error Deleting Custom Field with ID ${detail.CustomFieldID}  </span>`;
+                    }
+                } else { cell2.innerHTML += `<span style="padding:10px;" class="bullet"></span>`; }
+                const cell3 = row.insertCell();
+                if(detail.FKDropped)
+                {
+                    if (detail.FKDropped == "Yes") 
+                    {
+                        cell3.innerHTML += `<span class="green-check">${detail.FKConstraint} Dropped  </span>`;
+                    }
+                    else
+                    {
+                        cell3.innerHTML += `<span style="color:red;" class="red-cross">Error Dropping ${detail.FKConstraint}  </span>`;
+                    }
+                } else { cell3.innerHTML += `<span style="padding:10px;" class="bullet"></span>`; }
+                //container.appendChild(div);
+          }
+          container.appendChild(tableDelete);
+        }
+        container.innerHTML += "<br>";
+    
+}
+
