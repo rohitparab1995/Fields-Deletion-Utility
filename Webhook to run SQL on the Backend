@@ -1,0 +1,248 @@
+function RunHook(ctx, paramString, headerString){
+  
+  var requestParam = JSON.parse(paramString);
+  ctx.DebugLog("Request : " + paramString);
+  //#############  Global Parameters Start  ##############
+  var CDEName = ""; 
+  var FieldListID = requestParam.FieldList;
+  var FieldList = [];
+  
+  if(requestParam.CDEName == null) 
+  {
+      var errorJson = {};
+      errorJson.error = "CDE Name Empty";
+      return errorJson;
+  }
+           
+  if(requestParam.CDEName.substring(0, 7) === "Custom.")
+  {
+      CDEName = requestParam.CDEName.replace("Custom.", "Custom__");
+      ctx.DebugLog("CDE Name : " + CDEName);
+  }
+  if(FieldListID != null)
+  {
+      for(var i=0 ; i < FieldListID.length ; i++)
+      {
+          if(FieldListID[i].slice(-2) === "ID")
+          {
+              const pattern = /Custom(.+?)(\d+)ID/;
+              const match = FieldListID[i].match(pattern);
+              if(match) 
+              {
+                const customPart = match[1];
+                const integerPart = match[2];
+                const restOfText = FieldListID[i].replace(pattern, '');
+                const outputString = 'Custom' + integerPart + customPart + restOfText;
+                FieldList.push(outputString);
+              } 
+              else
+              {
+                FieldList.push(FieldListID[i].slice(0, -2));
+              }
+          }
+          else
+          {
+              FieldList.push(FieldListID[i]);
+          }
+      }
+  }
+  //#############  Global Parameters End  ##############
+  
+  //#############  checkDetails Start  ##############
+  if(requestParam.resource == "checkDetails")
+  {
+      var detailsJSON = {};
+      
+      for(var i=0 ; i<FieldList.length ; i++)
+      {
+        var newArray = {};
+        
+        //Check if field exists
+        var columnCheck = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '" + CDEName + "' AND COLUMN_NAME = '" + FieldListID[i] + "'";
+        var columnCount = ctx.Db.ExecuteScalarSQLInt(columnCheck);
+        if(columnCount == 1){
+          newArray.Exists = "Yes";
+        }
+        
+        //Check if custom field exists
+        var getCustomField = "SELECT * FROM CustomFields WHERE Area = {0} AND FieldName={1}";
+        var getCustomFieldParameters = [requestParam.CDEName,FieldList[i]];      
+        var CustomField = ctx.Db.ExecuteScalarSQLInt(getCustomField , getCustomFieldParameters);
+        ctx.DebugLog("CustomField = " + CustomField);
+        if(CustomField != null){
+          newArray.CustomFieldID = CustomField;
+        }
+        
+        //Check if foreign key exists
+        var checkForeignKey = "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_NAME = {0} AND COLUMN_NAME = {1} AND CONSTRAINT_NAME IN (SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE CONSTRAINT_TYPE = 'FOREIGN KEY' AND TABLE_NAME = {2})";
+        var FKparameters = [CDEName,FieldListID[i],CDEName];
+        var FKConstraint = ctx.Db.ExecuteScalarSQLString(checkForeignKey , FKparameters);
+        ctx.DebugLog("FKContraint = " + FKConstraint);
+        if(FKConstraint != null)    
+        {
+          newArray.ForeignKey = FKConstraint;
+        }
+        detailsJSON[FieldList[i]] = newArray;        
+      }
+
+      return detailsJSON;
+  }
+  //#############  checkDetails End  ##############
+  
+  //#############  Get CDE Fields Start  ##############
+  if(requestParam.resource == "getCDEFields")
+  {
+      var defaultFields = ['ActiveDate','AttachmentsContainerID','ChangeAction','ClientID','EntryDate','EntryUserID','MemberID','ModifiedDate','ModifiedUserID','PolicyID','ProposalID','SkipRating','SourcePKID','SyncPKID','InactiveDate'];
+      var columnNamesJSON = {"CDEFields": []};
+      var sql = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '" + CDEName +"'";
+      var result = ctx.Db.ExecuteSQL(sql);
+      for (var i in result) 
+      {
+          var flag = 0;
+          var row = result[i];
+          var columnName = row.COLUMN_NAME;
+          for (var i = 0; i < defaultFields.length; i++)
+          {
+            if(defaultFields[i] == columnName) { flag = 1; break;}         
+          }
+          if(flag == 0) 
+          {
+            columnNamesJSON.CDEFields.push(columnName);
+          }
+      }
+    
+      return columnNamesJSON;
+  }
+  //#############  Get CDE Fields End  ##############
+  
+  //#############  Delete CDE Field Start  ##############
+  if(requestParam.resource == "deleteCDEField")
+  {
+      var SQLLogs = "";
+      var logInstance = ctx.Db.NewInstance("Custom.DeleteCDEFieldsDetails");
+      var deleteCDEFieldJSON = {};
+    
+      
+      if(requestParam.UserID == null)
+      {
+        deleteCDEFieldJSON = {"UserDetails":"User Denied"}
+        return deleteCDEFieldJSON;
+      }
+      else
+      {
+        var userSQL = "SELECT COUNT(*) FROM Users WHERE UserID = {0}";
+        SQLLogs += userSQL + " with Parameters " + requestParam.UserID + "\n\n";
+        var userValidity = ctx.Db.ExecuteScalarSQLInt(userSQL , [requestParam.UserID]);
+        if(userValidity == 1) 
+        {
+          deleteCDEFieldJSON = {"UserDetails":"User Valid!"}
+        } 
+        else 
+        {
+          deleteCDEFieldJSON = {"UserDetails":"User Invalid!"}
+          return deleteCDEFieldJSON;
+        }
+      }
+      
+      
+      logInstance.UserLoggedID = requestParam.UserID;
+      logInstance.CDEOperated = CDEName;
+      logInstance.FieldsOperated = FieldListID.join(' , ');
+    
+      if(requestParam.FieldList == null) 
+      {
+          deleteCDEFieldJSON.error = "Field List Empty";
+          return deleteCDEFieldJSON;
+      }
+      else
+      {
+        for(var k=0 ; k<FieldListID.length ; k++)
+        {
+          var jsonDetailsField = {};
+          //Check Column
+          var columnCheck = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '" + CDEName + "' AND COLUMN_NAME = '" + FieldListID[k] + "'";
+          SQLLogs += columnCheck + "\n\n";
+          columnCount = ctx.Db.ExecuteScalarSQLInt(columnCheck);
+        
+          if(columnCount == 1)
+          { 
+            //Check and Delete Custom Field
+            var getCustomField = "SELECT * FROM CustomFields WHERE Area = {0} AND FieldName={1}";
+            var getCustomFieldParameters = [requestParam.CDEName,FieldList[k]];     
+            SQLLogs += getCustomField + " with Parameters " + requestParam.CDEName+ " , "+FieldList[k]+"\n\n";
+            var CustomField = ctx.Db.ExecuteScalarSQLInt(getCustomField , getCustomFieldParameters);
+            ctx.DebugLog("CustomField = " + CustomField);     
+            if(CustomField != null)
+            {
+                jsonDetailsField.CustomFieldID = CustomField;
+                var deleteCustomField = "EXEC [dbo].[sp_RemoveCustomField] @ClientID = NULL, @Area = N'" + requestParam.CDEName + "', @TableName = NULL, @FieldName = N'" + FieldList[k] + "', @ColumnName = N'" + FieldListID[k] + "', @CodeTypeID = NULL, @IsExtensionField = NULL";
+                SQLLogs += deleteCustomField + "\n\n";
+                ctx.Db.ExecuteSQL(deleteCustomField);
+                
+                CustomField = ctx.Db.ExecuteScalarSQLInt(getCustomField , getCustomFieldParameters);
+                if(CustomField == null)
+                {
+                    jsonDetailsField.CustomFieldDeleted = "Yes";
+                }
+            }
+            
+            //Check and Drop Foreign Key
+            var checkForeignKey = "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_NAME = {0} AND COLUMN_NAME = {1} AND CONSTRAINT_NAME IN (SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE CONSTRAINT_TYPE = 'FOREIGN KEY' AND TABLE_NAME = {2})";
+            var FKparameters = [CDEName,FieldListID[k],CDEName];
+            SQLLogs += checkForeignKey + " with Parameters " + CDEName + ", " + FieldListID[k] + ", " + CDEName + "\n\n";
+            var FKConstraint = ctx.Db.ExecuteScalarSQLString(checkForeignKey , FKparameters);
+            ctx.DebugLog("FKContraint = " + FKConstraint);
+            if(FKConstraint != null)    
+            {
+                jsonDetailsField.FKConstraint = FKConstraint;
+                var dropFKsql = "ALTER TABLE " + CDEName + " DROP CONSTRAINT " + FKConstraint;
+                SQLLogs += dropFKsql + "\n\n";
+                ctx.Db.ExecuteSQL(dropFKsql);
+                
+                FKConstraint = ctx.Db.ExecuteScalarSQLString(checkForeignKey , FKparameters);
+                if(FKConstraint == null)
+                {          
+                    jsonDetailsField.FKDropped = "Yes";
+                }
+            }
+            
+            //Check and Drop Column
+            if(columnCount == 1)
+            {
+                var dropColumnSql = "ALTER TABLE " + CDEName + " DROP COLUMN " + FieldListID[k];
+                SQLLogs += dropColumnSql + "\n\n";
+                ctx.Db.ExecuteSQL(dropColumnSql);
+              
+                columnCount = ctx.Db.ExecuteScalarSQLInt(columnCheck);
+                if(columnCount == 0)
+                {
+                    jsonDetailsField.ColumnDeleted = "Deleted";
+                }
+            } 
+          }
+          
+          deleteCDEFieldJSON[FieldListID[k]] = jsonDetailsField
+          deleteCDEFieldJSON.UserDetails = requestParam.UserID;
+        } 
+      }
+      
+      ctx.DebugLog("Running sp_InitCustomEntities");
+      var initEntities = "EXEC [dbo].[sp_InitCustomEntities]";
+      SQLLogs += initEntities + "\n\n";
+      logInstance.SQLRun = SQLLogs;
+      ctx.Db.SaveAndApplyTriggers(logInstance);
+      ctx.Db.Sleep(5);
+      ctx.Db.ExecuteSQL(initEntities); 
+    
+      //Notify Over Email
+      var userEmailSQL = "SELECT Email FROM Users WHERE UserID = {0}";
+      var userEmail = ctx.Db.ExecuteScalarSQLString(userEmailSQL, [requestParam.UserID]);
+      SQLLogs += userSQL + " with Parameters " + requestParam.UserID + "\n\n";
+      ctx.Db.SendNotificationEmail('rvasudevparab@origamirisk.com', 'SQL RUN Log - ' + new Date() + " - Email for Admin", SQLLogs);
+      ctx.Db.SendNotificationEmail(userEmail, 'SQL RUN Log - ' + new Date(), SQLLogs);
+
+      return deleteCDEFieldJSON;
+      //#############  Delete CDE Field End  ##############
+  }
+  
+}
